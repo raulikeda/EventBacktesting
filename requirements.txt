@@ -1,1 +1,1 @@
-event-processing==0.0.4
+event-processing==0.0.6
