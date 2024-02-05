@@ -6,7 +6,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="event-backtesting",
-    version="0.0.1",
+    version="0.0.2",
     author="Raul Ikeda",
     description="Simple Event Backtesting Library",
     long_description=long_description,
