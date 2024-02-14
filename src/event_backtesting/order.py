@@ -1,7 +1,5 @@
 from datetime import datetime
 
-# TODO: Separate Enum in a different class: OrderStatus, OrderSide, etc
-
 
 class OrderStatus:
     # Enum for status attribute

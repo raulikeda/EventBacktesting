@@ -1,101 +1,159 @@
 from event_processing.subscriber import Subscriber
 from event_processing.event import Event
+from event_backtesting.constants import *
+from event_backtesting.order import Order
 from datetime import datetime
-from market_data import MarketData
+
+# from market_data import MarketData
 
 
 class DataManager(Subscriber):
-
-    BID, ASK, NEG, TICK, HIST, INTR = ["BID", "ASK", "NEG", "TICK", "HIST", "INTR"]
-    BLOOMBERG, YAHOO, RAW = ["BLOOMBERG", "YAHOO", "RAW"]
-
     def __init__(self):
-        self.events = {}
+        self.events: dict = {}
 
     def receive(self, event: Event):
-        if event.topic == "BACKTESTING" and event.partition == "run":
+        if event.topic == SYSTEM and event.partition == System.LOAD:
+            events = []
             for instrument in event.value:
-                if event.value[instrument].source == BLOOMBERG:
-                    if event.value[instrument].type == TICK:
-                        pass
-                    elif event.value[instrument].type == INTR:
-                        pass
-                    elif event.value[instrument].type == HIST:
-                        pass
-                elif event.value[instrument].source == YAHOO:
-                    if event.value[instrument].type == HIST:
-                        pass
-                if event.value[instrument].source == BLOOMBERG:
-                    if event.value[instrument].type == TICK:
-                        pass
-                    elif event.value[instrument].type == INTR:
-                        pass
-                    elif event.value[instrument].type == HIST:
-                        pass
+
+                if event.value[instrument][Data.SOURCE] == DataSource.BLOOMBERG:
+                    if event.value[instrument][Data.TYPE] == DataType.TICK:
+                        data = self.load_bloomberg_tick(
+                            instrument, event.value[instrument][Data.FILE]
+                        )
+                    elif event.value[instrument][Data.TYPE] == DataType.INTR:
+                        data = self.load_bloomberg_intr(
+                            instrument, event.value[instrument][Data.FILE]
+                        )
+                elif event.value[instrument][Data.SOURCE] == DataSource.YAHOO:
+                    if event.value[instrument][Data.TYPE] == DataType.HIST:
+                        data = self.load_yahoo_hist(
+                            instrument, event.value[instrument][Data.FILE]
+                        )
+
+                events += data
+
+            for event in events:
+                if event.timestamp.toordinal() not in self.events:
+                    self.events[event.timestamp.toordinal()] = []
+
+                self.events[event.timestamp.toordinal()].append(event)
+
+        if event.topic == SYSTEM and event.partition == System.RUN:
+            # Start simulation
+
+            dates = list(self.events.keys())
+            dates.sort()
+            for date in dates:
+                for event in self.events[date]:
+                    self.send(event)
 
     # Specific methods for different data sources
 
-    def load_bloomberg_tick(self, instrument, data):
+    def load_bloomberg_tick(self, instrument, file_name):
 
-        events = data.split("\n")
+        events = []
 
-        # Skip first row
-        events = events[1:]
+        with open(file_name, "r") as file:
+            data = file.read()
 
-        for event in events:
+        # Break in lines
+        rows = data.split("\n")
+
+        # Skip first row (header row)
+        rows = rows[1:]
+
+        for row in rows:
 
             # Split the columns with ;
-            cols = event.split(";")
+            cols = row.split(CSV_SEPARATOR)
 
+            # It should be date, action, value, volume
             if len(cols) == 4:
 
-                timestamp = datetime.strptime(cols[0], "%d/%m/%Y %H:%M:%S")
+                timestamp = datetime.strptime(cols[0], DATETIME_FORMAT)
+                # Brazilian decimal format
                 price = float(cols[2].replace(",", "."))
                 quantity = int(cols[3])
-                type = cols[1]
+                event_type = cols[1]
 
-                if timestamp.toordinal() not in self.events:
-                    self.events[timestamp.toordinal()] = []
+                if event_type == Instrument.BID:
+                    event_type = Instrument.BEST_BID
+                elif event_type == Instrument.ASK:
+                    event_type = Instrument.BEST_ASK
 
-                self.events[timestamp.toordinal()].append(
-                    MarketData(instrument, timestamp, type, price, quantity)
+                events.append(
+                    Event(
+                        topic=instrument,
+                        partition=event_type,
+                        value={Order.QUANTITY: quantity, Order.PRICE: price},
+                        timestamp=timestamp,
+                    )
                 )
 
-    def loadYAHOOHist(self, file, instrument, type=Event.CANDLE):
+        return events
 
-        with open(file, "r") as file:
+    def load_yahoo_hist(self, instrument, file_name):
+
+        events = []
+
+        with open(file_name, "r") as file:
             data = file.read()
 
-        events = data.split("\n")
-        events = events[1:]
-        for event in events:
-            cols = event.split(",")
+        # Break in lines
+        rows = data.split("\n")
+
+        # Skip first row (header row)
+        rows = rows[1:]
+
+        for row in rows:
+            cols = row.split(",")  # It is fixed for yahoo
+            # Sometimes the row is null
             if len(cols) == 7 and cols[1] != "null":
 
-                date = datetime.strptime(cols[0], "%Y-%m-%d")
+                date = datetime.strptime(cols[0], "%Y-%m-%d")  # It is fixed for yahoo
                 price = (float(cols[1]), float(cols[2]), float(cols[3]), float(cols[5]))
-                quantity = float(cols[6])
-                # quantity = 0
+                quantity = int(cols[6])
 
-                if date.toordinal() not in self.events:
-                    self.events[date.toordinal()] = []
+                # TODO: fix Open, High, Low as Adjusted Close
+                # TODO: arg adjusted to choose from adjusted o dividend event
 
-                self.events[date.toordinal()].append(
-                    Event(instrument, date, type, price, quantity)
+                events.append(
+                    Event(
+                        topic=instrument,
+                        partition=Instrument.CANDLE,
+                        value={
+                            Candle.OPEN: price[0],
+                            Candle.HIGH: price[1],
+                            Candle.LOW: price[2],
+                            Candle.CLOSE: price[3],
+                            Candle.VOLUME: quantity,
+                        },
+                        timestamp=date,
+                    )
                 )
 
-    def loadBBGIntr(self, file, instrument, type=Event.CANDLE):
+        return events
 
-        with open(file, "r") as file:
+    def load_bloomberg_intr(self, instrument, file_name):
+
+        events = []
+
+        with open(file_name, "r") as file:
             data = file.read()
 
-        events = data.split("\n")
-        events = events[1:]
-        for event in events:
-            cols = event.split(";")
+        # Break in lines
+        rows = data.split("\n")
+
+        # Skip first row (header row)
+        rows = rows[1:]
+
+        for row in rows:
+            cols = row.split(CSV_SEPARATOR)
+
             if len(cols) == 5:
 
-                date = datetime.strptime(cols[0], "%d/%m/%Y %H:%M:%S")
+                date = datetime.strptime(cols[0], DATETIME_FORMAT)
                 price = (
                     float(cols[1].replace(",", ".")),
                     float(cols[3].replace(",", ".")),
@@ -104,16 +162,19 @@ class DataManager(Subscriber):
                 )
                 quantity = 0
 
-                if date.timestamp() not in self.events:
-                    self.events[date.timestamp()] = []
-
-                self.events[date.timestamp()].append(
-                    Event(instrument, date, type, price, quantity)
+                events.append(
+                    Event(
+                        topic=instrument,
+                        partition=Instrument.CANDLE,
+                        value={
+                            Candle.OPEN: price[0],
+                            Candle.HIGH: price[1],
+                            Candle.LOW: price[2],
+                            Candle.CLOSE: price[3],
+                            Candle.VOLUME: quantity,
+                        },
+                        timestamp=date,
+                    )
                 )
 
-    def run(self, ts):
-        dates = list(self.events.keys())
-        dates.sort()
-        for date in dates:
-            for event in self.events[date]:
-                ts.inject(event)
+        return events

@@ -1,10 +1,26 @@
 # Events:
 SYSTEM = "system"
 
+CSV_SEPARATOR = ";"
+DEC_SYMBOL = ","
+DATETIME_FORMAT = "%d/%m/%Y %H:%M:%S"
+DATE_FORMAT = "%Y-%m-%d"
 
 # Partitions:
 class System:
     LOAD, RUN = ["LOAD", "RUN"]
+
+
+class DataType:
+    BID, ASK, NEG, TICK, HIST, INTR = ["BID", "ASK", "NEG", "TICK", "HIST", "INTR"]
+
+
+class DataSource:
+    BLOOMBERG, YAHOO, RAW = ["BLOOMBERG", "YAHOO", "RAW"]
+
+
+class Data:
+    SOURCE, TYPE, FILE = ["source", "type", "file"]
 
 
 class Instrument:
