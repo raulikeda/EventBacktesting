@@ -1,6 +1,6 @@
 from event_processing.subscriber import Subscriber
 from event_processing.event import Event
-from event_backtesting.order import Order, Trade
+from event_backtesting.order import Order, Trade, OrderSide, OrderStatus
 from event_backtesting.constants import *
 from datetime import datetime
 
@@ -38,13 +38,13 @@ class Book(Subscriber):
                 # Append the candle as last trade
                 bid = Order(
                     event.topic,
-                    Order.BUY,
+                    OrderSide.BUY,
                     0,
                     event.value[Candle.CLOSE],
                 )
                 ask = Order(
                     event.topic,
-                    Order.SELL,
+                    OrderSide.SELL,
                     0,
                     event.value[Candle.CLOSE],
                 )
@@ -75,13 +75,14 @@ class Book(Subscriber):
                     del self.orders[fill.id]
 
                     # Send the FILLED event
+                    fill.status = OrderStatus.FILLED
 
                     self.send(
                         Event(
                             event.topic,
                             Instrument.FILLED,
-                            fill.__dict__,
-                            order.timestamp,
+                            fill.__dict__.copy(),
+                            event.timestamp,
                         )
                     )
 
@@ -97,7 +98,10 @@ class Book(Subscriber):
 
                 # Save the trade in the trades list
                 trade = Trade(
-                    self.timestamp, event.topic, event.value.quantity, event.value.price
+                    self.timestamp,
+                    event.topic,
+                    event.value[Order.QUANTITY],
+                    event.value[Order.PRICE],
                 )
                 self.trades.append(trade)
 
@@ -108,7 +112,10 @@ class Book(Subscriber):
                 if event.partition == Instrument.BEST_BID:
                     # Replace the best bid in the book
                     order = Order(
-                        event.topic, Order.BUY, event.value.quantity, event.value.price
+                        event.topic,
+                        OrderSide.BUY,
+                        event.value[Order.QUANTITY],
+                        event.value[Order.PRICE],
                     )
                     order.timestamp = event.timestamp
                     self.bids = [order]
@@ -116,13 +123,16 @@ class Book(Subscriber):
                 elif event.partition == Instrument.BEST_ASK:
                     # Replace the best ask in the book
                     order = Order(
-                        event.topic, Order.SELL, event.value.quantity, event.value.price
+                        event.topic,
+                        OrderSide.SELL,
+                        event.value[Order.QUANTITY],
+                        event.value[Order.PRICE],
                     )
                     order.timestamp = event.timestamp
                     self.asks = [order]
 
-                # Try to fill the pending orders under new lob
-                filled = self.try_fill_orders(self.orders.values())
+                # Try to fill the pending orders under new lob with order price
+                filled = self.try_fill_orders(self.orders.values(), order_price=True)
                 # Remove if filled
                 for fill in filled:
                     del self.orders[fill.id]
@@ -133,11 +143,20 @@ class Book(Subscriber):
                 # Create the order object
                 order = Order(
                     event.topic,
-                    event.value.side,
-                    event.value.quantity,
-                    event.value.price,
+                    event.value[Order.SIDE],
+                    event.value[Order.QUANTITY],
+                    event.value[Order.PRICE],
                 )
-                order.owner = event.value.owner
+                order.owner = event.value[Order.OWNER]
+
+                self.send(
+                    Event(
+                        order.instrument,
+                        OrderStatus.NEW,
+                        order.__dict__.copy(),
+                        self.timestamp,
+                    )
+                )
 
                 # try to fill the order
                 filled = self.try_fill_orders([order])
@@ -164,14 +183,14 @@ class Book(Subscriber):
         return filled_orders
 
     # Method to try to fill list of orders with all LOB
-    def try_fill_orders(self, orders: list[Order]):
+    def try_fill_orders(self, orders: list[Order], order_price: bool = False):
         filled_orders = []
         for order in orders:
             # Buy Order
-            if order.side == Order.BUY:
+            if order.side == OrderSide.BUY:
                 book = self.asks
             # Sell Order
-            elif order.side == Order.SELL:
+            elif order.side == OrderSide.SELL:
                 book = self.bids
 
             # Book position
@@ -179,46 +198,52 @@ class Book(Subscriber):
             # Initialize a quantity greater than 0
             q = order.quantity
             # while there is a book and filled anything
+            total = 0
             while i < len(book) and q > 0:
                 # Try fill with i-th depth of the book
-                q = self.try_fill_order(order, book[i])
+                q = self.try_fill_order_offer(order, book[i], order_price)
+                total += q
                 # Next book line
                 i += 1
 
-            if order.executed == order.quantity:
-                # filled fully a new order
-                self.send(
-                    Event(
-                        order.instrument,
-                        Order.FILLED,
-                        order.__dict__,
-                        self.timestamp,
+            # If it filled any quantity in the order
+            if total > 0:
+                if order.executed == order.quantity:
+                    # filled fully a new order
+                    order.status = OrderStatus.FILLED
+                    self.send(
+                        Event(
+                            order.instrument,
+                            OrderStatus.FILLED,
+                            order.__dict__.copy(),
+                            self.timestamp,
+                        )
                     )
-                )
-                filled_orders.append(order)
-            else:
-                # filled partially a new order
-                self.send(
-                    Event(
-                        order.instrument,
-                        Order.PARTIAL,
-                        order.__dict__,
-                        self.timestamp,
+                    filled_orders.append(order)
+                else:
+                    # filled partially a new order
+                    order.status = OrderStatus.PARTIAL
+                    self.send(
+                        Event(
+                            order.instrument,
+                            OrderStatus.PARTIAL,
+                            order.__dict__.copy(),
+                            self.timestamp,
+                        )
                     )
-                )
 
         return filled_orders
 
     # Method to try to fill ONE order with one line of LOB
-    def try_fill_order_offer(self, order: Order, offer: Order):
+    def try_fill_order_offer(self, order: Order, offer: Order, order_price: bool):
         # Pending order quantity
         rem = order.quantity - order.executed
 
         if (
             # If buy order and the price is above ask
-            (order.side == Order.BUY and order.price >= offer.price)
+            (order.side == OrderSide.BUY and order.price >= offer.price)
             # If sell order and the price is bellow bid
-            or (order.side == Order.SELL and order.price <= offer.price)
+            or (order.side == OrderSide.SELL and order.price <= offer.price)
             # If market order
             or (order.price == 0)
         ):
@@ -232,7 +257,10 @@ class Book(Subscriber):
                 quantity = min(rem, offer.quantity)
 
             # New amount filled in the order
-            amount += quantity * offer.price
+            if order_price:  # Use the order price
+                amount += quantity * order.price
+            else:  # use the offer price
+                amount += quantity * offer.price
 
             # Update order
             order.executed += quantity

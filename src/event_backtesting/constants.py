@@ -1,6 +1,6 @@
 # Events:
 SYSTEM = "system"
-# instrument
+
 
 # Partitions:
 class System:

@@ -1,5 +1,27 @@
 from datetime import datetime
 
+# TODO: Separate Enum in a different class: OrderStatus, OrderSide, etc
+
+
+class OrderStatus:
+    # Enum for status attribute
+    NEW, PARTIAL, FILLED, REJECTED, CANCELED = [
+        "NEW",
+        "PARTIAL",
+        "FILLED",
+        "REJECTED",
+        "CANCELED",
+    ]
+
+
+class OrderSide:
+    # Enum for side attribute
+    BUY, SELL, SELLSHORT = [
+        "BUY",
+        "SELL",
+        "SELLSHORT",
+    ]
+
 
 class Order:
     """
@@ -50,20 +72,17 @@ class Order:
         instance.id = Order.get_id()
         return instance
 
-    # Enum for side attribute
-    BUY, SELL, SELLSHORT = [
-        "BUY",
-        "SELL",
-        "SELLSHORT",
-    ]
-
-    # Enum for status attribute
-    NEW, PARTIAL, FILLED, REJECTED, CANCELED = [
-        "NEW",
-        "PARTIAL",
-        "FILLED",
-        "REJECTED",
-        "CANCELED",
+    #  Enum for class attributes
+    ID, INSTRUMENT, SIDE, STATUS, QUANTITY, PRICE, EXECUTED, AVERAGE, OWNER = [
+        "id",
+        "instrument",
+        "side",
+        "status",
+        "quantity",
+        "price",
+        "executed",
+        "average",
+        "owner",
     ]
 
     def __init__(self, instrument: str, side: str, quantity: int, price: float) -> None:
@@ -74,10 +93,10 @@ class Order:
 
         self.owner = 0
         self.instrument = instrument
-        if side not in [Order.BUY, Order.SELL, Order.SELLSHORT]:
+        if side not in [OrderSide.BUY, OrderSide.SELL, OrderSide.SELLSHORT]:
             raise ValueError("Invalid side order.")
         self.side = side
-        self.status = Order.NEW
+        self.status = OrderStatus.NEW
         self.timestamp = ""
         self.quantity = quantity
         self.price = price
