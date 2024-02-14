@@ -1,12 +1,17 @@
 from event_processing.subscriber import Subscriber
 from event_processing.event import Event
-from constants import *
+from event_backtesting.order import Order
+from event_backtesting.constants import *
 
-# TODO: sorted dict on bid/ask
+# TODO: sorted dict on bid/ask for LOB
+
 
 class Book(Subscriber):
-
     def __init__(self, instrument):
+
+        # book instrument
+        self.instrument = instrument
+
         # timestamp of last update
         self.timestamp = None
 
@@ -22,164 +27,213 @@ class Book(Subscriber):
         # list of pending orders
         self.orders: dict[int, Order] = []
 
-        # book instrument
-        self.instrument = instrument
-    
     def receive(self, event: Event):
         if event.topic == self.instrument:
-            
-            # save last update and price
+
+            # Save last update
             self.timestamp = event.timestamp
 
-            if event.partition == CANDLE:
-                order = Order(event.topic, 0, event.value[3])
+            # Received a candle price event
+            if event.partition == Instrument.CANDLE:
+
+                # Append the candle as last trade
+                bid = Order(
+                    event.topic,
+                    Order.BUY,
+                    event.value[Candle.VOLUME],
+                    event.value[Candle.CLOSE],
+                )
+                ask = Order(
+                    event.topic,
+                    Order.SELL,
+                    event.value[Candle.VOLUME],
+                    event.value[Candle.CLOSE],
+                )
+
+                bid.timestamp = event.timestamp
+                self.trades.append(bid)  # TODO: change to a better object/class
+
+                # Update bid/ask book. This is the best guess we have
+                self.bids = [bid]
+                self.asks = [ask]
+
+                # Try match pending orders
+                # We assume infinity liquidity and
+                # the Low/High range will cross the limit price
+                filled_orders = self.try_match_range(
+                    event.value[Candle.LOW], event.value[Candle.HIGH]
+                )
+
+                # Send fill event
+                for fill in filled_orders:
+
+                    # Remove from pending list
+                    del self.orders[fill.id]
+
+                    # Send the FILLED event
+
+                    self.send(
+                        Event(
+                            event.topic,
+                            Instrument.FILLED,
+                            fill.__dict__,
+                            order.timestamp,
+                        )
+                    )
+
+            # TODO: RAW DATA & Event LOB
+            elif event.partition == Instrument.BID:
+                pass
+            elif event.partition == Instrument.ASK:
+                pass
+            elif event.partition == Instrument.NEG:
+                pass
+            elif event.partition == Instrument.TRADE:
+                # TODO: change to a better object/class
+                # Save the trade in the trades list
+                order = Order(
+                    event.topic, Order.BUY, event.value.quantity, event.value.price
+                )
                 order.timestamp = event.timestamp
                 self.trades.append(order)
 
-                self.bids = [order]
-                self.asks = [order]
+            elif (
+                event.partition == Instrument.BEST_BID
+                or event.partition == Instrument.BEST_ASK
+            ):
+                if event.partition == Instrument.BEST_BID:
+                    # Replace the best bid in the book
+                    order = Order(
+                        event.topic, Order.BUY, event.value.quantity, event.value.price
+                    )
+                    order.timestamp = event.timestamp
+                    self.bids = [order]
 
-                filled_orders = self.try_match(event.value[2], event.value[1])
-                for fill in filled_orders:
+                elif event.partition == Instrument.BEST_ASK:
+                    # Replace the best ask in the book
+                    order = Order(
+                        event.topic, Order.SELL, event.value.quantity, event.value.price
+                    )
+                    order.timestamp = event.timestamp
+                    self.asks = [order]
+
+                # Try to fill the pending orders under new lob
+                filled = self.try_fill_orders(self.orders.values())
+                # Remove if filled
+                for fill in filled:
                     del self.orders[fill.id]
-                    self.send(Event(FILL, fill.id, fill.__dict__, order.timestamp))
 
-            # TODO: TICK-BY-TICK & RAW DATA
-            # elif event.partition == TRADE:
-            #     order = Order(event.topic, event.value[0], event.value[1])
-            #     order.timestamp = event.timestamp
-            #     self.trades.append(order)
+            # If receive an order request from execution
+            elif event.partition == Instrument.ORDER:
 
-            # elif event.partition == BEST_BID:
-            #     order = Order(event.topic, event.value[0], event.value[1])
-            #     order.timestamp = event.timestamp
-            #     self.bid = [order]
+                # Create the order object
+                order = Order(
+                    event.topic,
+                    event.value.side,
+                    event.value.quantity,
+                    event.value.price,
+                )
+                order.owner = event.value.owner
 
-            # elif event.partition == BEST_ASK:
-            #     order = Order(event.topic, event.value[0], event.value[1])
-            #     order.timestamp = event.timestamp
-            #     self.ask = [order]
-
-            elif event.partition == ORDER:
-                order = Order(event.topic,event.value.quantity, event.value.price)
-                order.owner = event.sender
-
-                if order.quantity > 0:
-                    if order.price == 0 or order.price >= self.bids[0].price:
-                        pass # HERE
-
-
+                # try to fill the order
+                filled = self.try_fill_orders([order])
+                # if it was not possible to fill it completely
+                if len(filled) == 0:
+                    # Add to pending orders list
                     self.orders[order.id] = order
-                    pass
-                elif order.quantity < 0:
-                    pass
-                # TODO: try_match
 
-
-#Process and then yield
-        
-    def try_match(self, low, high):
+    # Filling ALL pending orders when received a Candle event
+    # If target price is inside low-high range, it fills in order price
+    # Assuming that the order was placed already
+    def try_match_range(self, low: float, high: float):
         filled_orders = []
+
+        # Try all pending orders
         for order in self.orders.values():
+            # If order price is inside the range
             if order.price >= low and order.price <= high:
+                # Fill it fully, assuming infinite liquidity
                 order.executed = order.quantity
                 order.average = order.price
                 filled_orders.append(order)
-        
+
         return filled_orders
 
-#### Old code
+    # Method to try to fill list of orders with all LOB
+    def try_fill_orders(self, orders: list[Order]):
+        filled_orders = []
+        for order in orders:
+            # Buy Order
+            if order.side == Order.BUY:
+                book = self.asks
+            # Sell Order
+            elif order.side == Order.SELL:
+                book = self.bids
 
-    def old(self, event):
-            if event.partition == BID or event.partition == CANDLE:
-
-                self.bid = event
-                for order in self.orders:
-                    if order.quantity < 0:
-                        if order.price <= event.price:
-                            rem = order.quantity - order.executed
-
-                            if event.quantity == 0:
-                                qty = rem
-                            else:
-                                qty = max(rem, -event.quantity)
-
-                            average = order.average * order.executed + qty * event.price
-
-                            order.executed += qty
-                            order.average = average / order.executed
-
-                            if order.quantity == order.executed:
-                                order.status = Order.FILLED
-
-                            self.fill(order.id, event.price, qty, order.status)
-
-            if event.type == Event.ASK or event.type == Event.CANDLE:
-                self.ask = event
-                for order in self.orders:
-                    if order.quantity > 0:
-                        if order.price >= event.price:
-                            rem = order.quantity - order.executed
-
-                            if event.quantity == 0:
-                                qty = rem
-                            else:
-                                qty = min(rem, event.quantity)
-
-                            average = order.average * order.executed + qty * event.price
-
-                            order.executed += qty
-                            order.average = average / order.executed
-
-                            if order.quantity == order.executed:
-                                order.status = Order.FILLED
-
-                            self.fill(order.id, event.price, qty, order.status)
-
-            if event.type == Event.TRADE:
-                self.trade = event
-                for order in self.orders:
-                    if order.quantity > 0 and order.price >= event.price:
-                        rem = order.quantity - order.executed
-
-                        if event.quantity == 0:
-                            qty = rem
-                        else:
-                            qty = min(rem, event.quantity)
-
-                        average = order.average * order.executed + qty * event.price
-
-                        order.executed += qty
-                        order.average = average / order.executed
-
-                        if order.quantity == order.executed:
-                            order.status = Order.FILLED
-
-                        self.fill(order.id, event.price, qty, order.status)
-
-                    if order.quantity < 0 and order.price <= event.price:
-                        rem = order.quantity - order.executed
-
-                        if event.quantity == 0:
-                            qty = rem
-                        else:
-                            qty = max(rem, -event.quantity)
-
-                        average = order.average * order.executed + qty * event.price
-
-                        order.executed += qty
-                        order.average = average / order.executed
-
-                        if order.quantity == order.executed:
-                            order.status = Order.FILLED
-
-                        self.fill(order.id, event.price, qty, order.status)
-
+            # Book position
             i = 0
-            while i < len(self.orders):
-                if self.orders[i].status == Order.FILLED:
-                    del self.orders[i]
-                else:
-                    i += 1
+            # Initialize a quantity greater than 0
+            q = order.quantity
+            # while there is a book and filled anything
+            while i < len(book) and q > 0:
+                # Try fill with i-th depth of the book
+                q = self.try_fill_order(order, book[i])
+                # Next book line
+                i += 1
 
-        
+            if order.executed == order.quantity:
+                # filled fully a new order
+                self.send(
+                    Event(
+                        order.instrument,
+                        Order.FILLED,
+                        order.__dict__,
+                        self.timestamp,
+                    )
+                )
+                filled_orders.append(order)
+            else:
+                # filled partially a new order
+                self.send(
+                    Event(
+                        order.instrument,
+                        Order.PARTIAL,
+                        order.__dict__,
+                        self.timestamp,
+                    )
+                )
+
+        return filled_orders
+
+    # Method to try to fill ONE order with one line of LOB
+    def try_fill_order_offer(self, order: Order, offer: Order):
+        # Pending order quantity
+        rem = order.quantity - order.executed
+
+        if (
+            # If buy order and the price is above ask
+            (order.side == Order.BUY and order.price >= offer.price)
+            # If sell order and the price is bellow bid
+            or (order.side == Order.SELL and order.price <= offer.price)
+            # If market order
+            or (order.price == 0)
+        ):
+            # amount filled before new fill
+            amount = order.executed * order.average
+
+            # If book has infinite quantity (OHLC)
+            if offer.quantity == 0:
+                quantity = rem
+            else:
+                quantity = min(rem, offer.quantity)
+
+            # New amount filled in the order
+            amount += quantity * offer.price
+
+            # Update order
+            order.executed += quantity
+            order.average = amount / order.executed
+            return quantity
+
+        # no quantity filled
+        return 0
