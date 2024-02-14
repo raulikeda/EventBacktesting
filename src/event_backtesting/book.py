@@ -1,33 +1,32 @@
 from event_processing.subscriber import Subscriber
 from event_processing.event import Event
-from event_backtesting.order import Order
+from event_backtesting.order import Order, Trade
 from event_backtesting.constants import *
-
-# TODO: sorted dict on bid/ask for LOB
+from datetime import datetime
 
 
 class Book(Subscriber):
-    def __init__(self, instrument):
+    def __init__(self, instrument: str) -> None:
 
         # book instrument
-        self.instrument = instrument
+        self.instrument: str = instrument
 
         # timestamp of last update
-        self.timestamp = None
+        self.timestamp: datetime = None
 
         # list of trades
-        self.trades = []
+        self.trades: list[Trade] = []
 
         # list of bids
-        self.bids = []
+        self.bids: list[Order] = []
 
         # list of asks
-        self.asks = []
+        self.asks: list[Order] = []
 
         # list of pending orders
-        self.orders: dict[int, Order] = []
+        self.orders: dict[int, Order] = {}
 
-    def receive(self, event: Event):
+    def receive(self, event: Event) -> None:
         if event.topic == self.instrument:
 
             # Save last update
@@ -40,18 +39,23 @@ class Book(Subscriber):
                 bid = Order(
                     event.topic,
                     Order.BUY,
-                    event.value[Candle.VOLUME],
+                    0,
                     event.value[Candle.CLOSE],
                 )
                 ask = Order(
                     event.topic,
                     Order.SELL,
-                    event.value[Candle.VOLUME],
+                    0,
                     event.value[Candle.CLOSE],
                 )
 
-                bid.timestamp = event.timestamp
-                self.trades.append(bid)  # TODO: change to a better object/class
+                trade = Trade(
+                    event.timestamp,
+                    event.topic,
+                    event.value[Candle.VOLUME],
+                    event.value[Candle.CLOSE],
+                )
+                self.trades.append(trade)
 
                 # Update bid/ask book. This is the best guess we have
                 self.bids = [bid]
@@ -82,6 +86,7 @@ class Book(Subscriber):
                     )
 
             # TODO: RAW DATA & Event LOB
+            # TODO: sorted dict on bid/ask for LOB
             elif event.partition == Instrument.BID:
                 pass
             elif event.partition == Instrument.ASK:
@@ -89,13 +94,12 @@ class Book(Subscriber):
             elif event.partition == Instrument.NEG:
                 pass
             elif event.partition == Instrument.TRADE:
-                # TODO: change to a better object/class
+
                 # Save the trade in the trades list
-                order = Order(
-                    event.topic, Order.BUY, event.value.quantity, event.value.price
+                trade = Trade(
+                    self.timestamp, event.topic, event.value.quantity, event.value.price
                 )
-                order.timestamp = event.timestamp
-                self.trades.append(order)
+                self.trades.append(trade)
 
             elif (
                 event.partition == Instrument.BEST_BID
