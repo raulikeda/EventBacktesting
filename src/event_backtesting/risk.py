@@ -15,12 +15,12 @@ class Risk(Subscriber):
         self._last = {}  # dictionary of last prices by instrument
 
         self._trade: dict[int, Trade] = {}  # Actual open trade for each strategy
-        self._trades: dict[
-            int, list[Trade]
-        ] = {}  # list of all trades for each strategy
-        self._days: dict[
-            int, dict
-        ] = {}  # Struct of daily aggregated mectrics for each strategy
+        self._trades: dict[int, list[Trade]] = (
+            {}
+        )  # list of all trades for each strategy
+        self._days: dict[int, dict] = (
+            {}
+        )  # Struct of daily aggregated mectrics for each strategy
 
         self._orders: dict[
             int, int
@@ -56,9 +56,7 @@ class Risk(Subscriber):
                 # Update results MtM
                 for trade in self._trade.values():
                     if not trade.zeroed():
-                        pass 
-
-
+                        pass
 
             elif event.partition in [
                 Partition.BUY,
