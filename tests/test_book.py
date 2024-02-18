@@ -20,7 +20,7 @@ def test_event_subscription_and_dispatch():
 
     event = Event(
         topic,
-        Instrument.CANDLE,
+        Partition.CANDLE,
         {
             Candle.OPEN: 1,
             Candle.HIGH: 2,
@@ -49,7 +49,7 @@ def test_event_subscription_and_dispatch():
     # Send a bid
     bid = Event(
         topic,
-        Instrument.BEST_BID,
+        Partition.BEST_BID,
         {Order.QUANTITY: 10, Order.PRICE: 20.30},
         timestamp,
     )
@@ -58,7 +58,7 @@ def test_event_subscription_and_dispatch():
     # Send an ask
     ask = Event(
         topic,
-        Instrument.BEST_ASK,
+        Partition.BEST_ASK,
         {Order.QUANTITY: 20, Order.PRICE: 20.31},
         timestamp,
     )
@@ -73,7 +73,7 @@ def test_event_subscription_and_dispatch():
     # Set up a Subscriber to ge the fills
     class MockSubscriber(Subscriber):
         def __init__(self):
-            self.received_events = []
+            self.received_events: list[Event] = []
 
         def receive(self, event: Event):
             self.received_events.append(event)
@@ -84,111 +84,200 @@ def test_event_subscription_and_dispatch():
     # Send a mkt order & capture fill
     order = Event(
         topic,
-        Instrument.ORDER,
+        Partition.ORDER,
         {
             Order.OWNER: "me",
             Order.SIDE: OrderSide.BUY,
             Order.QUANTITY: 10,
             Order.PRICE: 0,
         },
+        timestamp,
     )
     engine.inject(order)
 
     # Verify the placement
     # It starts with id 5 because of the book formation before
+    assert mock_subscriber.received_events[-3].topic == topic
+    assert mock_subscriber.received_events[-3].partition == OrderStatus.NEW
+    assert mock_subscriber.received_events[-3].value[Order.ID] == 5
+    assert mock_subscriber.received_events[-3].value[Order.OWNER] == "me"
+    assert mock_subscriber.received_events[-3].value[Order.STATUS] == OrderStatus.NEW
+    assert mock_subscriber.received_events[-3].value[Order.QUANTITY] == 10
+    assert mock_subscriber.received_events[-3].value[Order.PRICE] == 0
+    assert mock_subscriber.received_events[-3].value[Order.EXECUTED] == 0
+    assert mock_subscriber.received_events[-3].value[Order.AVERAGE] == 0
+    assert mock_subscriber.received_events[-3].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-3].timestamp == timestamp
+
+    # The fill
     assert mock_subscriber.received_events[-2].topic == topic
-    assert mock_subscriber.received_events[-2].partition == OrderStatus.NEW
+    assert mock_subscriber.received_events[-2].partition == OrderStatus.PARTIAL
     assert mock_subscriber.received_events[-2].value[Order.ID] == 5
     assert mock_subscriber.received_events[-2].value[Order.OWNER] == "me"
-    assert mock_subscriber.received_events[-2].value[Order.STATUS] == OrderStatus.NEW
+    assert (
+        mock_subscriber.received_events[-2].value[Order.STATUS] == OrderStatus.PARTIAL
+    )
     assert mock_subscriber.received_events[-2].value[Order.QUANTITY] == 10
     assert mock_subscriber.received_events[-2].value[Order.PRICE] == 0
-    assert mock_subscriber.received_events[-2].value[Order.EXECUTED] == 0
-    assert mock_subscriber.received_events[-2].value[Order.AVERAGE] == 0
+    assert mock_subscriber.received_events[-2].value[Order.EXECUTED] == 10
+    assert mock_subscriber.received_events[-2].value[Order.AVERAGE] == 20.31
+    assert mock_subscriber.received_events[-2].value[Fill.QUANTITY] == 10
+    assert mock_subscriber.received_events[-2].value[Fill.PRICE] == 20.31
+    assert mock_subscriber.received_events[-2].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-2].timestamp == timestamp
 
-    # Verify the order filling
+    # Verify the termination
     assert mock_subscriber.received_events[-1].topic == topic
     assert mock_subscriber.received_events[-1].partition == OrderStatus.FILLED
-    assert mock_subscriber.received_events[-2].value[Order.ID] == 5
+    assert mock_subscriber.received_events[-1].value[Order.ID] == 5
     assert mock_subscriber.received_events[-1].value[Order.OWNER] == "me"
     assert mock_subscriber.received_events[-1].value[Order.STATUS] == OrderStatus.FILLED
     assert mock_subscriber.received_events[-1].value[Order.QUANTITY] == 10
     assert mock_subscriber.received_events[-1].value[Order.PRICE] == 0
     assert mock_subscriber.received_events[-1].value[Order.EXECUTED] == 10
     assert mock_subscriber.received_events[-1].value[Order.AVERAGE] == 20.31
+    assert mock_subscriber.received_events[-1].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-1].timestamp == timestamp
 
-    # Send a lmt order & capture fill
+    ## Send a mkt order higher than best bid and capture the fill
+
     order = Event(
         topic,
-        Instrument.ORDER,
+        Partition.ORDER,
+        {
+            Order.OWNER: "me",
+            Order.SIDE: OrderSide.SELL,
+            Order.QUANTITY: 30,
+            Order.PRICE: 0,
+        },
+        timestamp,
+    )
+    engine.inject(order)
+
+    assert mock_subscriber.received_events[-3].topic == topic
+    assert mock_subscriber.received_events[-3].partition == OrderStatus.NEW
+    assert mock_subscriber.received_events[-3].value[Order.ID] == 6
+    assert mock_subscriber.received_events[-3].value[Order.OWNER] == "me"
+    assert mock_subscriber.received_events[-3].value[Order.STATUS] == OrderStatus.NEW
+    assert mock_subscriber.received_events[-3].value[Order.QUANTITY] == 30
+    assert mock_subscriber.received_events[-3].value[Order.PRICE] == 0
+    assert mock_subscriber.received_events[-3].value[Order.EXECUTED] == 0
+    assert mock_subscriber.received_events[-3].value[Order.AVERAGE] == 0
+    assert mock_subscriber.received_events[-3].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-3].timestamp == timestamp
+
+    # The fill
+    assert mock_subscriber.received_events[-2].topic == topic
+    assert mock_subscriber.received_events[-2].partition == OrderStatus.PARTIAL
+    assert mock_subscriber.received_events[-2].value[Order.ID] == 6
+    assert mock_subscriber.received_events[-2].value[Order.OWNER] == "me"
+    assert (
+        mock_subscriber.received_events[-2].value[Order.STATUS] == OrderStatus.PARTIAL
+    )
+    assert mock_subscriber.received_events[-2].value[Order.QUANTITY] == 30
+    assert mock_subscriber.received_events[-2].value[Order.PRICE] == 0
+    assert mock_subscriber.received_events[-2].value[Order.EXECUTED] == 10
+    assert mock_subscriber.received_events[-2].value[Order.AVERAGE] == 20.30
+    assert mock_subscriber.received_events[-2].value[Fill.QUANTITY] == 10
+    assert mock_subscriber.received_events[-2].value[Fill.PRICE] == 20.30
+    assert mock_subscriber.received_events[-2].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-2].timestamp == timestamp
+
+    # Verify the termination
+    assert mock_subscriber.received_events[-1].topic == topic
+    assert mock_subscriber.received_events[-1].partition == OrderStatus.FILLED
+    assert mock_subscriber.received_events[-1].value[Order.ID] == 6
+    assert mock_subscriber.received_events[-1].value[Order.OWNER] == "me"
+    assert mock_subscriber.received_events[-1].value[Order.STATUS] == OrderStatus.FILLED
+    assert mock_subscriber.received_events[-1].value[Order.QUANTITY] == 30
+    assert mock_subscriber.received_events[-1].value[Order.PRICE] == 0
+    assert mock_subscriber.received_events[-1].value[Order.EXECUTED] == 10
+    assert mock_subscriber.received_events[-1].value[Order.AVERAGE] == 20.30
+    assert mock_subscriber.received_events[-1].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-1].timestamp == timestamp
+
+    ## Send a lmt order & capture fill
+    order = Event(
+        topic,
+        Partition.ORDER,
         {
             Order.OWNER: "me",
             Order.SIDE: OrderSide.BUY,
             Order.QUANTITY: 5,
             Order.PRICE: 20.32,
         },
+        timestamp,
     )
     engine.inject(order)
 
     # Verify the placement
-    assert mock_subscriber.received_events[-2].topic == topic
-    assert mock_subscriber.received_events[-2].partition == OrderStatus.NEW
-    assert mock_subscriber.received_events[-2].value[Order.ID] == 6
-    assert mock_subscriber.received_events[-2].value[Order.OWNER] == "me"
-    assert mock_subscriber.received_events[-2].value[Order.STATUS] == OrderStatus.NEW
-    assert mock_subscriber.received_events[-2].value[Order.QUANTITY] == 5
-    assert mock_subscriber.received_events[-2].value[Order.PRICE] == 20.32
-    assert mock_subscriber.received_events[-2].value[Order.EXECUTED] == 0
-    assert mock_subscriber.received_events[-2].value[Order.AVERAGE] == 0
+    assert mock_subscriber.received_events[-3].topic == topic
+    assert mock_subscriber.received_events[-3].partition == OrderStatus.NEW
+    assert mock_subscriber.received_events[-3].value[Order.ID] == 7
+    assert mock_subscriber.received_events[-3].value[Order.OWNER] == "me"
+    assert mock_subscriber.received_events[-3].value[Order.STATUS] == OrderStatus.NEW
+    assert mock_subscriber.received_events[-3].value[Order.QUANTITY] == 5
+    assert mock_subscriber.received_events[-3].value[Order.PRICE] == 20.32
+    assert mock_subscriber.received_events[-3].value[Order.EXECUTED] == 0
+    assert mock_subscriber.received_events[-3].value[Order.AVERAGE] == 0
+    assert mock_subscriber.received_events[-3].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-3].timestamp == timestamp
 
     # Verify the order filling
     assert mock_subscriber.received_events[-1].topic == topic
     assert mock_subscriber.received_events[-1].partition == OrderStatus.FILLED
-    assert mock_subscriber.received_events[-2].value[Order.ID] == 6
+    assert mock_subscriber.received_events[-2].value[Order.ID] == 7
     assert mock_subscriber.received_events[-1].value[Order.OWNER] == "me"
     assert mock_subscriber.received_events[-1].value[Order.STATUS] == OrderStatus.FILLED
     assert mock_subscriber.received_events[-1].value[Order.QUANTITY] == 5
     assert mock_subscriber.received_events[-1].value[Order.PRICE] == 20.32
     assert mock_subscriber.received_events[-1].value[Order.EXECUTED] == 5
     assert mock_subscriber.received_events[-1].value[Order.AVERAGE] == 20.31
+    assert mock_subscriber.received_events[-1].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-1].timestamp == timestamp
 
     # Send a lmt buy order without match
     order = Event(
         topic,
-        Instrument.ORDER,
+        Partition.ORDER,
         {
             Order.OWNER: "me",
             Order.SIDE: OrderSide.BUY,
             Order.QUANTITY: 15,
             Order.PRICE: 20.30,
         },
+        timestamp,
     )
     engine.inject(order)
 
     # Verify last fill
     # There is an event between each test (thats why it is -3)
     assert mock_subscriber.received_events[-3].partition == OrderStatus.FILLED
-    assert mock_subscriber.received_events[-3].value[Order.ID] == 6
+    assert mock_subscriber.received_events[-3].value[Order.ID] == 7
+    assert mock_subscriber.received_events[-3].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-3].timestamp == timestamp
 
     # Verify the placement
     assert mock_subscriber.received_events[-1].topic == topic
     assert mock_subscriber.received_events[-1].partition == OrderStatus.NEW
-    assert mock_subscriber.received_events[-1].value[Order.ID] == 7
+    assert mock_subscriber.received_events[-1].value[Order.ID] == 8
     assert mock_subscriber.received_events[-1].value[Order.OWNER] == "me"
     assert mock_subscriber.received_events[-1].value[Order.STATUS] == OrderStatus.NEW
     assert mock_subscriber.received_events[-1].value[Order.QUANTITY] == 15
     assert mock_subscriber.received_events[-1].value[Order.PRICE] == 20.30
     assert mock_subscriber.received_events[-1].value[Order.EXECUTED] == 0
     assert mock_subscriber.received_events[-1].value[Order.AVERAGE] == 0
+    assert mock_subscriber.received_events[-1].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-1].timestamp == timestamp
 
     # Verify pending orders
     assert len(book.orders) == 1
-    assert book.orders[7].status == OrderStatus.NEW
+    assert book.orders[8].status == OrderStatus.NEW
 
     # send an ask and partial fill
     ask = Event(
         topic,
-        Instrument.BEST_ASK,
+        Partition.BEST_ASK,
         {Order.QUANTITY: 10, Order.PRICE: 20.29},
         timestamp,
     )
@@ -196,7 +285,7 @@ def test_event_subscription_and_dispatch():
 
     assert mock_subscriber.received_events[-1].topic == topic
     assert mock_subscriber.received_events[-1].partition == OrderStatus.PARTIAL
-    assert mock_subscriber.received_events[-1].value[Order.ID] == 7
+    assert mock_subscriber.received_events[-1].value[Order.ID] == 8
     assert mock_subscriber.received_events[-1].value[Order.OWNER] == "me"
     assert (
         mock_subscriber.received_events[-1].value[Order.STATUS] == OrderStatus.PARTIAL
@@ -205,17 +294,19 @@ def test_event_subscription_and_dispatch():
     assert mock_subscriber.received_events[-1].value[Order.PRICE] == 20.30
     assert mock_subscriber.received_events[-1].value[Order.EXECUTED] == 10
     assert mock_subscriber.received_events[-1].value[Order.AVERAGE] == 20.30
+    assert mock_subscriber.received_events[-1].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-1].timestamp == timestamp
 
     # Verify pending orders
     assert len(book.orders) == 1
-    assert book.orders[7].status == OrderStatus.PARTIAL
+    assert book.orders[8].status == OrderStatus.PARTIAL
 
     # New ask and fill the partial filled order
 
     # send an ask and partial fill
     ask = Event(
         topic,
-        Instrument.BEST_ASK,
+        Partition.BEST_ASK,
         {Order.QUANTITY: 5, Order.PRICE: 20.29},
         timestamp,
     )
@@ -223,50 +314,56 @@ def test_event_subscription_and_dispatch():
 
     assert mock_subscriber.received_events[-1].topic == topic
     assert mock_subscriber.received_events[-1].partition == OrderStatus.FILLED
-    assert mock_subscriber.received_events[-1].value[Order.ID] == 7
+    assert mock_subscriber.received_events[-1].value[Order.ID] == 8
     assert mock_subscriber.received_events[-1].value[Order.OWNER] == "me"
     assert mock_subscriber.received_events[-1].value[Order.STATUS] == OrderStatus.FILLED
     assert mock_subscriber.received_events[-1].value[Order.QUANTITY] == 15
     assert mock_subscriber.received_events[-1].value[Order.PRICE] == 20.30
     assert mock_subscriber.received_events[-1].value[Order.EXECUTED] == 15
     assert mock_subscriber.received_events[-1].value[Order.AVERAGE] == 20.30
+    assert mock_subscriber.received_events[-1].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-1].timestamp == timestamp
 
     assert len(book.orders) == 0
 
     # send an ask and partial fill
     ask = Event(
         topic,
-        Instrument.BEST_ASK,
+        Partition.BEST_ASK,
         {Order.QUANTITY: 10, Order.PRICE: 20.30},
         timestamp,
     )
     engine.inject(ask)
 
-    assert mock_subscriber.received_events[-2].value[Order.ID] == 7
+    assert mock_subscriber.received_events[-2].value[Order.ID] == 8
     assert mock_subscriber.received_events[-2].value[Order.EXECUTED] == 15
+    assert mock_subscriber.received_events[-2].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-2].timestamp == timestamp
 
     # Send a lmt buy order without match
     order = Event(
         topic,
-        Instrument.ORDER,
+        Partition.ORDER,
         {
             Order.OWNER: "me",
             Order.SIDE: OrderSide.BUY,
             Order.QUANTITY: 30,
             Order.PRICE: 20.15,
         },
+        timestamp,
     )
     engine.inject(order)
 
     order = Event(
         topic,
-        Instrument.ORDER,
+        Partition.ORDER,
         {
             Order.OWNER: "me",
             Order.SIDE: OrderSide.SELL,
             Order.QUANTITY: 40,
             Order.PRICE: 20.35,
         },
+        timestamp,
     )
     engine.inject(order)
 
@@ -276,7 +373,7 @@ def test_event_subscription_and_dispatch():
 
     event = Event(
         topic,
-        Instrument.CANDLE,
+        Partition.CANDLE,
         {
             Candle.OPEN: 20.20,
             Candle.HIGH: 20.45,
@@ -294,22 +391,26 @@ def test_event_subscription_and_dispatch():
 
     assert mock_subscriber.received_events[-2].topic == topic
     assert mock_subscriber.received_events[-2].partition == OrderStatus.FILLED
-    assert mock_subscriber.received_events[-2].value[Order.ID] == 11
+    assert mock_subscriber.received_events[-2].value[Order.ID] == 12
     assert mock_subscriber.received_events[-2].value[Order.OWNER] == "me"
     assert mock_subscriber.received_events[-2].value[Order.STATUS] == OrderStatus.FILLED
     assert mock_subscriber.received_events[-2].value[Order.QUANTITY] == 30
     assert mock_subscriber.received_events[-2].value[Order.PRICE] == 20.15
     assert mock_subscriber.received_events[-2].value[Order.EXECUTED] == 30
     assert mock_subscriber.received_events[-2].value[Order.AVERAGE] == 20.15
+    assert mock_subscriber.received_events[-2].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-2].timestamp == timestamp
 
     assert mock_subscriber.received_events[-1].topic == topic
     assert mock_subscriber.received_events[-1].partition == OrderStatus.FILLED
-    assert mock_subscriber.received_events[-1].value[Order.ID] == 12
+    assert mock_subscriber.received_events[-1].value[Order.ID] == 13
     assert mock_subscriber.received_events[-1].value[Order.OWNER] == "me"
     assert mock_subscriber.received_events[-1].value[Order.STATUS] == OrderStatus.FILLED
     assert mock_subscriber.received_events[-1].value[Order.QUANTITY] == 40
     assert mock_subscriber.received_events[-1].value[Order.PRICE] == 20.35
     assert mock_subscriber.received_events[-1].value[Order.EXECUTED] == 40
     assert mock_subscriber.received_events[-1].value[Order.AVERAGE] == 20.35
+    assert mock_subscriber.received_events[-1].value[Order.TIMESTAMP] == timestamp
+    assert mock_subscriber.received_events[-1].timestamp == timestamp
 
     # TODO: bid/ask/trade events

@@ -12,7 +12,10 @@ class DataManager(Subscriber):
         self.events: dict = {}
 
     def receive(self, event: Event):
-        if event.topic == SYSTEM and event.partition == System.LOAD:
+        if event.topic == Topic.SYSTEM and event.partition == Partition.LOAD:
+            # Reset the data
+            self.events: dict = {}
+
             events = []
             for instrument in event.value:
 
@@ -39,7 +42,7 @@ class DataManager(Subscriber):
 
                 self.events[event.timestamp.toordinal()].append(event)
 
-        if event.topic == SYSTEM and event.partition == System.RUN:
+        if event.topic == Topic.SYSTEM and event.partition == Partition.RUN:
             # Start simulation
 
             dates = list(self.events.keys())
@@ -75,17 +78,17 @@ class DataManager(Subscriber):
                 # Brazilian decimal format
                 price = float(cols[2].replace(",", "."))
                 quantity = int(cols[3])
-                event_type = cols[1]
+                partition = cols[1]
 
-                if event_type == Instrument.BID:
-                    event_type = Instrument.BEST_BID
-                elif event_type == Instrument.ASK:
-                    event_type = Instrument.BEST_ASK
+                if partition == Partition.BID:
+                    partition = Partition.BEST_BID
+                elif partition == Partition.ASK:
+                    partition = Partition.BEST_ASK
 
                 events.append(
                     Event(
                         topic=instrument,
-                        partition=event_type,
+                        partition=partition,
                         value={Order.QUANTITY: quantity, Order.PRICE: price},
                         timestamp=timestamp,
                     )
@@ -121,7 +124,7 @@ class DataManager(Subscriber):
                 events.append(
                     Event(
                         topic=instrument,
-                        partition=Instrument.CANDLE,
+                        partition=Partition.CANDLE,
                         value={
                             Candle.OPEN: price[0],
                             Candle.HIGH: price[1],
@@ -165,7 +168,7 @@ class DataManager(Subscriber):
                 events.append(
                     Event(
                         topic=instrument,
-                        partition=Instrument.CANDLE,
+                        partition=Partition.CANDLE,
                         value={
                             Candle.OPEN: price[0],
                             Candle.HIGH: price[1],

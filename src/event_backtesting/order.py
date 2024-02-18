@@ -1,24 +1,5 @@
 from datetime import datetime
-
-
-class OrderStatus:
-    # Enum for status attribute
-    NEW, PARTIAL, FILLED, REJECTED, CANCELED = [
-        "NEW",
-        "PARTIAL",
-        "FILLED",
-        "REJECTED",
-        "CANCELED",
-    ]
-
-
-class OrderSide:
-    # Enum for side attribute
-    BUY, SELL, SELLSHORT = [
-        "BUY",
-        "SELL",
-        "SELLSHORT",
-    ]
+from event_backtesting.constants import *
 
 
 class Order:
@@ -71,7 +52,18 @@ class Order:
         return instance
 
     #  Enum for class attributes
-    ID, INSTRUMENT, SIDE, STATUS, QUANTITY, PRICE, EXECUTED, AVERAGE, OWNER = [
+    (
+        ID,
+        INSTRUMENT,
+        SIDE,
+        STATUS,
+        QUANTITY,
+        PRICE,
+        EXECUTED,
+        AVERAGE,
+        OWNER,
+        TIMESTAMP,
+    ) = [
         "id",
         "instrument",
         "side",
@@ -81,6 +73,7 @@ class Order:
         "executed",
         "average",
         "owner",
+        "timestamp",
     ]
 
     def __init__(self, instrument: str, side: str, quantity: int, price: float) -> None:

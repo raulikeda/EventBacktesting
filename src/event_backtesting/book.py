@@ -33,7 +33,7 @@ class Book(Subscriber):
             self.timestamp = event.timestamp
 
             # Received a candle price event
-            if event.partition == Instrument.CANDLE:
+            if event.partition == Partition.CANDLE:
 
                 # Append the candle as last trade
                 bid = Order(
@@ -80,7 +80,7 @@ class Book(Subscriber):
                     self.send(
                         Event(
                             event.topic,
-                            Instrument.FILLED,
+                            OrderStatus.FILLED,
                             fill.__dict__.copy(),
                             event.timestamp,
                         )
@@ -88,13 +88,13 @@ class Book(Subscriber):
 
             # TODO: RAW DATA & Event LOB
             # TODO: sorted dict on bid/ask for LOB
-            elif event.partition == Instrument.BID:
+            elif event.partition == Partition.BID:
                 pass
-            elif event.partition == Instrument.ASK:
+            elif event.partition == Partition.ASK:
                 pass
-            elif event.partition == Instrument.NEG:
+            elif event.partition == Partition.NEG:
                 pass
-            elif event.partition == Instrument.TRADE:
+            elif event.partition == Partition.TRADE:
 
                 # Save the trade in the trades list
                 trade = Trade(
@@ -106,10 +106,10 @@ class Book(Subscriber):
                 self.trades.append(trade)
 
             elif (
-                event.partition == Instrument.BEST_BID
-                or event.partition == Instrument.BEST_ASK
+                event.partition == Partition.BEST_BID
+                or event.partition == Partition.BEST_ASK
             ):
-                if event.partition == Instrument.BEST_BID:
+                if event.partition == Partition.BEST_BID:
                     # Replace the best bid in the book
                     order = Order(
                         event.topic,
@@ -120,7 +120,7 @@ class Book(Subscriber):
                     order.timestamp = event.timestamp
                     self.bids = [order]
 
-                elif event.partition == Instrument.BEST_ASK:
+                elif event.partition == Partition.BEST_ASK:
                     # Replace the best ask in the book
                     order = Order(
                         event.topic,
@@ -138,7 +138,7 @@ class Book(Subscriber):
                     del self.orders[fill.id]
 
             # If receive an order request from execution
-            elif event.partition == Instrument.ORDER:
+            elif event.partition == Partition.ORDER:
 
                 # Create the order object
                 order = Order(
@@ -148,6 +148,7 @@ class Book(Subscriber):
                     event.value[Order.PRICE],
                 )
                 order.owner = event.value[Order.OWNER]
+                order.timestamp = self.timestamp
 
                 self.send(
                     Event(
@@ -195,42 +196,42 @@ class Book(Subscriber):
 
             # Book position
             i = 0
-            # Initialize a quantity greater than 0
-            q = order.quantity
             # while there is a book and filled anything
-            total = 0
-            while i < len(book) and q > 0:
+            while i < len(book):
                 # Try fill with i-th depth of the book
-                q = self.try_fill_order_offer(order, book[i], order_price)
-                total += q
-                # Next book line
-                i += 1
-
-            # If it filled any quantity in the order
-            if total > 0:
-                if order.executed == order.quantity:
-                    # filled fully a new order
-                    order.status = OrderStatus.FILLED
-                    self.send(
-                        Event(
-                            order.instrument,
-                            OrderStatus.FILLED,
-                            order.__dict__.copy(),
-                            self.timestamp,
-                        )
-                    )
-                    filled_orders.append(order)
-                else:
+                quantity, price = self.try_fill_order_offer(order, book[i], order_price)
+                if quantity > 0:
                     # filled partially a new order
                     order.status = OrderStatus.PARTIAL
                     self.send(
                         Event(
                             order.instrument,
-                            OrderStatus.PARTIAL,
-                            order.__dict__.copy(),
+                            Partition.PARTIAL,
+                            {
+                                **order.__dict__.copy(),
+                                **{Fill.QUANTITY: quantity, Fill.PRICE: price},
+                            },
                             self.timestamp,
                         )
                     )
+                elif quantity == 0:
+                    i = len(book)
+                # Next book line
+                i += 1
+
+            # If it filled any quantity in the order or mkt order
+            if order.executed == order.quantity or order.price == 0:
+                # filled fully a new order
+                order.status = OrderStatus.FILLED
+                self.send(
+                    Event(
+                        order.instrument,
+                        OrderStatus.FILLED,
+                        order.__dict__.copy(),
+                        self.timestamp,
+                    )
+                )
+                filled_orders.append(order)
 
         return filled_orders
 
@@ -257,15 +258,19 @@ class Book(Subscriber):
                 quantity = min(rem, offer.quantity)
 
             # New amount filled in the order
+
             if order_price:  # Use the order price
                 amount += quantity * order.price
+                price = order.price
             else:  # use the offer price
                 amount += quantity * offer.price
+                price = offer.price
 
             # Update order
             order.executed += quantity
             order.average = amount / order.executed
-            return quantity
+
+            return quantity, price
 
         # no quantity filled
-        return 0
+        return 0, 0

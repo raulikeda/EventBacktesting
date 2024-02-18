@@ -19,7 +19,7 @@ def test_data_load_and_run():
 
     engine = Engine()
     dm = DataManager()
-    engine.subscribe(dm, SYSTEM)
+    engine.subscribe(dm, Topic.SYSTEM)
 
     # Set up a Subscriber to ge the fills
     class MockSubscriber(Subscriber):
@@ -37,8 +37,8 @@ def test_data_load_and_run():
 
     # Test bloomberg tick
     event = Event(
-        SYSTEM,
-        System.LOAD,
+        Topic.SYSTEM,
+        Partition.LOAD,
         {
             instrument: {
                 Data.SOURCE: DataSource.BLOOMBERG,
@@ -53,8 +53,8 @@ def test_data_load_and_run():
 
     # Test bloomberg tick
     event = Event(
-        SYSTEM,
-        System.RUN,
+        Topic.SYSTEM,
+        Partition.RUN,
         None,
     )
     engine.inject(event)
@@ -64,12 +64,12 @@ def test_data_load_and_run():
     assert len(mock_subscriber.received_events) == 41
 
     assert mock_subscriber.received_events[0].topic == instrument
-    assert mock_subscriber.received_events[0].partition == Instrument.BEST_BID
+    assert mock_subscriber.received_events[0].partition == Partition.BEST_BID
     assert mock_subscriber.received_events[0].value[Order.QUANTITY] == 400
     assert mock_subscriber.received_events[0].value[Order.PRICE] == 59.68
 
     assert mock_subscriber.received_events[-1].topic == instrument
-    assert mock_subscriber.received_events[-1].partition == Instrument.BEST_ASK
+    assert mock_subscriber.received_events[-1].partition == Partition.BEST_ASK
     assert mock_subscriber.received_events[-1].value[Order.QUANTITY] == 99
     assert mock_subscriber.received_events[-1].value[Order.PRICE] == 59.95
 
